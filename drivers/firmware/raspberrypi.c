@@ -15,6 +15,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/mailbox_client.h>
 #include <linux/module.h>
+#include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/pm_domain.h>
 #include <soc/bcm2835/raspberrypi-firmware-property.h>
@@ -32,11 +33,12 @@ struct raspberrypi_firmware {
 	u32 enabled;
 };
 
-static struct raspberrypi_firmware *firmware;
 static DEFINE_MUTEX(transaction_lock);
 
 static void response_callback(struct mbox_client *cl, void *msg)
 {
+	struct raspberrypi_firmware *firmware =
+		container_of(cl, struct raspberrypi_firmware, cl);
 	complete(&firmware->c);
 }
 
@@ -45,7 +47,8 @@ static void response_callback(struct mbox_client *cl, void *msg)
  * and synchronously waits for the reply.
  */
 static int
-raspberrypi_firmware_transaction(u32 chan, u32 data)
+raspberrypi_firmware_transaction(struct raspberrypi_firmware *firmware,
+				 u32 chan, u32 data)
 {
 	u32 message = MBOX_MSG(chan, data);
 	int ret;
@@ -67,7 +70,6 @@ raspberrypi_firmware_transaction(u32 chan, u32 data)
 	return ret;
 }
 
-
 /*
  * Submits a set of concatenated tags to the VPU firmware through the
  * mailbox property interface.
@@ -77,15 +79,15 @@ raspberrypi_firmware_transaction(u32 chan, u32 data)
  * See struct raspberrypi_firmware_property_tag_header for the per-tag
  * structure.
  */
-int raspberrypi_firmware_property(void *data, size_t tag_size)
+int raspberrypi_firmware_property_list(struct device_node *of_node,
+				       void *data, size_t tag_size)
 {
+	struct platform_device *pdev = of_find_device_by_node(of_node);
+	struct raspberrypi_firmware *firmware = platform_get_drvdata(pdev);
 	size_t size = tag_size + 12;
 	u32 *buf;
 	dma_addr_t bus_addr;
 	int ret = 0;
-
-	if (!firmware)
-		return -EPROBE_DEFER;
 
 	/* Packets are processed a dword at a time. */
 	if (size & 3)
@@ -105,7 +107,8 @@ int raspberrypi_firmware_property(void *data, size_t tag_size)
 	buf[size / 4 - 1] = RASPBERRYPI_FIRMWARE_PROPERTY_END;
 	wmb();
 
-	ret = raspberrypi_firmware_transaction(MBOX_CHAN_PROPERTY, bus_addr);
+	ret = raspberrypi_firmware_transaction(firmware,
+					       MBOX_CHAN_PROPERTY, bus_addr);
 
 	rmb();
 	memcpy(data, &buf[2], tag_size);
@@ -125,51 +128,80 @@ int raspberrypi_firmware_property(void *data, size_t tag_size)
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(raspberrypi_firmware_property_list);
+
+/*
+ * Submits a single tag to the VPU firmware through the mailbox
+ * property interface.
+ *
+ * This is a convenience wrapper around
+ * raspberrypi_firmware_property_list() to avoid some of the
+ * boilerplate in property calls.
+ */
+int raspberrypi_firmware_property(struct device_node *of_node,
+				  u32 tag, void *tag_data, size_t buf_size)
+{
+	/* Single tags are very small (generally 8 bytes), so the
+	 * stack should be safe.
+	 */
+	u8 data[buf_size + sizeof(struct raspberrypi_firmware_property_tag_header)];
+	struct raspberrypi_firmware_property_tag_header *header =
+		(struct raspberrypi_firmware_property_tag_header *)data;
+	int ret;
+
+	header->tag = tag;
+	header->buf_size = buf_size;
+	header->req_resp_size = 0;
+	memcpy(data + sizeof(struct raspberrypi_firmware_property_tag_header),
+	       tag_data, buf_size);
+
+	ret = raspberrypi_firmware_property_list(of_node, &data, sizeof(data));
+	memcpy(tag_data,
+	       data + sizeof(struct raspberrypi_firmware_property_tag_header),
+	       buf_size);
+
+	return ret;
+}
 EXPORT_SYMBOL_GPL(raspberrypi_firmware_property);
 
 struct raspberrypi_power_domain {
 	u32 domain;
 	struct generic_pm_domain base;
+	struct device *dev;
 };
 
 /*
  * Asks the firmware to enable or disable power on a specific power
  * domain.
  */
-static int raspberrypi_firmware_set_power(uint32_t domain, bool on)
+static int raspberrypi_firmware_set_power(struct generic_pm_domain *genpd,
+					  bool on)
 {
-	struct {
-		struct raspberrypi_firmware_property_tag_header header;
-		u32 domain;
-		u32 on;
-	} packet;
+	struct raspberrypi_power_domain *raspberrypi_domain =
+		container_of(genpd, struct raspberrypi_power_domain, base);
+	u32 packet[2];
 	int ret;
 
-	memset(&packet, 0, sizeof(packet));
-	packet.header.tag = RASPBERRYPI_FIRMWARE_SET_POWER_STATE;
-	packet.header.buf_size = 8;
-	packet.domain = domain;
-	packet.on = on;
-	ret = raspberrypi_firmware_property(&packet, sizeof(packet));
-	if (!ret && !packet.on)
+	packet[0] = raspberrypi_domain->domain;
+	packet[1] = on;
+	ret = raspberrypi_firmware_property(raspberrypi_domain->dev->of_node,
+					    RASPBERRYPI_FIRMWARE_SET_POWER_STATE,
+					    packet, sizeof(packet));
+	if (ret)
+		return ret;
+	if (!packet[1])
 		ret = -EINVAL;
-	return ret;
+	return 0;
 }
 
 static int raspberrypi_domain_off(struct generic_pm_domain *domain)
 {
-	struct raspberrypi_power_domain *raspberrpi_domain =
-		container_of(domain, struct raspberrypi_power_domain, base);
-
-	return raspberrypi_firmware_set_power(raspberrpi_domain->domain, false);
+	return raspberrypi_firmware_set_power(domain, false);
 }
 
 static int raspberrypi_domain_on(struct generic_pm_domain *domain)
 {
-	struct raspberrypi_power_domain *raspberrpi_domain =
-		container_of(domain, struct raspberrypi_power_domain, base);
-
-	return raspberrypi_firmware_set_power(raspberrpi_domain->domain, true);
+	return raspberrypi_firmware_set_power(domain, true);
 }
 
 static struct raspberrypi_power_domain raspberrypi_power_domain_sdcard = {
@@ -187,6 +219,7 @@ static struct raspberrypi_power_domain raspberrypi_power_domain_usb = {
 		.name = "USB",
 		.power_off = raspberrypi_domain_off,
 		.power_on = raspberrypi_domain_on,
+		.power_on_latency_ns = 600000000,
 	}
 };
 
@@ -210,7 +243,8 @@ static int raspberrypi_firmware_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	int ret = 0;
 	int i;
-
+	struct raspberrypi_firmware *firmware;
+ 
 	firmware = devm_kzalloc(dev, sizeof(*firmware), GFP_KERNEL);
 	if (!firmware)
 		return -ENOMEM;
@@ -230,7 +264,7 @@ static int raspberrypi_firmware_probe(struct platform_device *pdev)
 			ret = -EPROBE_DEFER;
 		else
 			dev_err(dev, "Failed to get mbox channel: %d\n", ret);
-		goto fail;
+		return ret;
 	}
 
 	init_completion(&firmware->c);
@@ -242,25 +276,26 @@ static int raspberrypi_firmware_probe(struct platform_device *pdev)
 	firmware->genpd_xlate.num_domains =
 		ARRAY_SIZE(raspberrypi_power_domains);
 
-	for (i = 0; i < ARRAY_SIZE(raspberrypi_power_domains); i++)
+	for (i = 0; i < ARRAY_SIZE(raspberrypi_power_domains); i++) {
+		struct raspberrypi_power_domain *raspberrypi_domain =
+			container_of(raspberrypi_power_domains[i],
+				     struct raspberrypi_power_domain, base);
+		raspberrypi_domain->dev = dev;
 		pm_genpd_init(raspberrypi_power_domains[i], NULL, true);
+	}
 
 	of_genpd_add_provider_onecell(dev->of_node, &firmware->genpd_xlate);
 
 	return 0;
-
-fail:
-	firmware = NULL;
-	return ret;
 }
 
 static int raspberrypi_firmware_remove(struct platform_device *pdev)
 {
+	struct raspberrypi_firmware *firmware = platform_get_drvdata(pdev);
 	struct device *dev = &pdev->dev;
 
 	of_genpd_del_provider(dev->of_node);
 	mbox_free_channel(firmware->chan);
-	firmware = NULL;
 
 	return 0;
 }
