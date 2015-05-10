@@ -1,6 +1,11 @@
 /*
  *  Copyright © 2015 Broadcom
  *
+ * Cpufreq support
+ * Copyright (C) 2015 Andrea Merello <andrea.merello@gmail.com>
+ * Based on bcm2708 reference code
+ * Copyright (C) 2011 Broadcom
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
@@ -17,12 +22,15 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/pm_domain.h>
+#include <linux/cpufreq.h>
 #include <soc/bcm2835/raspberrypi-firmware-property.h>
 
 #define MBOX_MSG(chan, data28)		(((data28) & ~0xf) | ((chan) & 0xf))
 #define MBOX_CHAN(msg)			((msg) & 0xf)
 #define MBOX_DATA28(msg)		((msg) & ~0xf)
 #define MBOX_CHAN_PROPERTY		8
+
+#define RASPBERRYPI_FIRMWARE_CLOCK_ARM 0x00000003
 
 struct raspberrypi_firmware {
 	struct genpd_onecell_data genpd_xlate;
@@ -127,6 +135,89 @@ int raspberrypi_firmware_property(void *data, size_t tag_size)
 }
 EXPORT_SYMBOL_GPL(raspberrypi_firmware_property);
 
+static int raspberrypi_cpufreq_set_clock(struct cpufreq_policy *policy,
+					unsigned int target_freq, unsigned int relation)
+{
+	struct {
+		struct raspberrypi_firmware_property_tag_header header;
+		u32 clock_id;
+		u32 clock_freq;
+	} packet;
+	int ret;
+
+	memset(&packet, 0, sizeof(packet));
+	packet.header.tag = RASPBERRYPI_FIRMWARE_SET_CLOCK_RATE;
+	packet.header.buf_size = 8;
+	packet.header.req_resp_size = 8;
+	packet.clock_id = RASPBERRYPI_FIRMWARE_CLOCK_ARM;
+	packet.clock_freq = target_freq * 1000;
+	ret = raspberrypi_firmware_property(&packet, sizeof(packet));
+	if (ret)
+		return -EINVAL;
+	policy->cur = packet.clock_freq / 1000;
+	return ret;
+
+}
+
+static int raspberrypi_firmware_get_clock(unsigned long clock_cmd, unsigned long *freq)
+{
+	struct {
+		struct raspberrypi_firmware_property_tag_header header;
+		u32 clock_id;
+		u32 freq;
+	} packet;
+	int ret;
+
+	memset(&packet, 0, sizeof(packet));
+	packet.header.tag = clock_cmd;
+	packet.header.buf_size = 8;
+	packet.header.req_resp_size = 4;
+	packet.clock_id = RASPBERRYPI_FIRMWARE_CLOCK_ARM;
+	ret = raspberrypi_firmware_property(&packet, sizeof(packet));
+	if (ret)
+		return -EINVAL;
+
+	*freq = packet.freq / 1000;
+	return 0;
+}
+
+static unsigned int raspberrypi_cpufreq_get_clock(unsigned int cpu)
+{
+	unsigned long val;
+	int ret;
+#warning TODO_RETVAL
+	ret = raspberrypi_firmware_get_clock(RASPBERRYPI_FIRMWARE_GET_CLOCK_RATE, &val);
+	return val;
+}
+
+static int raspberrypi_cpufreq_verify(struct cpufreq_policy *policy)
+{
+	return 0;
+}
+
+static int raspberrypi_cpufreq_init(struct cpufreq_policy *policy)
+{
+	unsigned long val;
+	int ret = 0;
+	/* from reference code: it has been measured (nS) */
+	policy->cpuinfo.transition_latency = 355000;
+	ret = raspberrypi_firmware_get_clock(RASPBERRYPI_FIRMWARE_GET_MIN_CLOCK_RATE, &val);
+	if (ret)
+		return ret;
+	policy->min = policy->cpuinfo.min_freq = val;
+
+	ret = raspberrypi_firmware_get_clock(RASPBERRYPI_FIRMWARE_GET_MAX_CLOCK_RATE, &val);
+	if (ret)
+		return ret;
+	policy->max = policy->cpuinfo.max_freq = val;
+
+	ret = raspberrypi_firmware_get_clock(RASPBERRYPI_FIRMWARE_GET_CLOCK_RATE, &val);
+	if (ret)
+		return ret;
+	policy->cur = val;
+	return 0;
+}
+
 struct raspberrypi_power_domain {
 	u32 domain;
 	struct generic_pm_domain base;
@@ -205,6 +296,14 @@ static struct generic_pm_domain *raspberrypi_power_domains[] = {
 	[POWER_DOMAIN_DSI] = &raspberrypi_power_domain_dsi.base,
 };
 
+static struct cpufreq_driver raspberrypi_cpufreq_driver = {
+	.name   = "rpi CPUFreq",
+	.init   = raspberrypi_cpufreq_init,
+	.target = raspberrypi_cpufreq_set_clock,
+	.verify = raspberrypi_cpufreq_verify,
+	.get    = raspberrypi_cpufreq_get_clock
+};
+
 static int raspberrypi_firmware_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -246,7 +345,8 @@ static int raspberrypi_firmware_probe(struct platform_device *pdev)
 		pm_genpd_init(raspberrypi_power_domains[i], NULL, true);
 
 	of_genpd_add_provider_onecell(dev->of_node, &firmware->genpd_xlate);
-
+#warning CHECK_RETVAL
+	cpufreq_register_driver(&raspberrypi_cpufreq_driver);
 	return 0;
 
 fail:
