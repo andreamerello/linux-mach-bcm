@@ -32,6 +32,15 @@
 
 #define RASPBERRYPI_FIRMWARE_CLOCK_ARM 0x00000003
 
+/* It seems raspberry could handle only two freqs (so called max and min).
+ * The table will be filled by asking for these values to the fw
+ */
+static struct cpufreq_frequency_table raspberrypi_freq_table[] = {
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, CPUFREQ_TABLE_END},
+};
+
 struct raspberrypi_firmware {
 	struct genpd_onecell_data genpd_xlate;
 	struct mbox_client cl;
@@ -136,7 +145,7 @@ int raspberrypi_firmware_property(void *data, size_t tag_size)
 EXPORT_SYMBOL_GPL(raspberrypi_firmware_property);
 
 static int raspberrypi_cpufreq_set_clock(struct cpufreq_policy *policy,
-					unsigned int target_freq, unsigned int relation)
+					unsigned int state)
 {
 	struct {
 		struct raspberrypi_firmware_property_tag_header header;
@@ -144,6 +153,7 @@ static int raspberrypi_cpufreq_set_clock(struct cpufreq_policy *policy,
 		u32 clock_freq;
 	} packet;
 	int ret;
+	unsigned int target_freq = raspberrypi_freq_table[state].frequency;
 
 	memset(&packet, 0, sizeof(packet));
 	packet.header.tag = RASPBERRYPI_FIRMWARE_SET_CLOCK_RATE;
@@ -155,8 +165,8 @@ static int raspberrypi_cpufreq_set_clock(struct cpufreq_policy *policy,
 	if (ret)
 		return -EINVAL;
 	policy->cur = packet.clock_freq / 1000;
-	return ret;
 
+	return ret;
 }
 
 static int raspberrypi_firmware_get_clock(unsigned long clock_cmd, unsigned long *freq)
@@ -184,10 +194,17 @@ static int raspberrypi_firmware_get_clock(unsigned long clock_cmd, unsigned long
 static unsigned int raspberrypi_cpufreq_get_clock(unsigned int cpu)
 {
 	unsigned long val;
-	int ret;
+	const unsigned long mean = (raspberrypi_freq_table[0].frequency +
+				raspberrypi_freq_table[1].frequency) / 2;
+
 #warning TODO_RETVAL
-	ret = raspberrypi_firmware_get_clock(RASPBERRYPI_FIRMWARE_GET_CLOCK_RATE, &val);
-	return val;
+	/* This value floats. It seems the FW actually
+	 * _measures_ the clock (roughly)
+	 */
+	raspberrypi_firmware_get_clock(RASPBERRYPI_FIRMWARE_GET_CLOCK_RATE, &val);
+
+	return (val < mean) ? raspberrypi_freq_table[0].frequency :
+		raspberrypi_freq_table[1].frequency;
 }
 
 static int raspberrypi_cpufreq_verify(struct cpufreq_policy *policy)
@@ -197,25 +214,23 @@ static int raspberrypi_cpufreq_verify(struct cpufreq_policy *policy)
 
 static int raspberrypi_cpufreq_init(struct cpufreq_policy *policy)
 {
-	unsigned long val;
+	unsigned long min, max;
 	int ret = 0;
 	/* from reference code: it has been measured (nS) */
-	policy->cpuinfo.transition_latency = 355000;
-	ret = raspberrypi_firmware_get_clock(RASPBERRYPI_FIRMWARE_GET_MIN_CLOCK_RATE, &val);
-	if (ret)
-		return ret;
-	policy->min = policy->cpuinfo.min_freq = val;
+	const unsigned int transition_latency = 355000;
 
-	ret = raspberrypi_firmware_get_clock(RASPBERRYPI_FIRMWARE_GET_MAX_CLOCK_RATE, &val);
+	ret = raspberrypi_firmware_get_clock(RASPBERRYPI_FIRMWARE_GET_MIN_CLOCK_RATE, &min);
 	if (ret)
 		return ret;
-	policy->max = policy->cpuinfo.max_freq = val;
 
-	ret = raspberrypi_firmware_get_clock(RASPBERRYPI_FIRMWARE_GET_CLOCK_RATE, &val);
+	ret = raspberrypi_firmware_get_clock(RASPBERRYPI_FIRMWARE_GET_MAX_CLOCK_RATE, &max);
 	if (ret)
 		return ret;
-	policy->cur = val;
-	return 0;
+
+	raspberrypi_freq_table[0].frequency = min;
+	raspberrypi_freq_table[1].frequency = max;
+
+	return cpufreq_generic_init(policy, raspberrypi_freq_table, transition_latency);
 }
 
 struct raspberrypi_power_domain {
@@ -297,11 +312,12 @@ static struct generic_pm_domain *raspberrypi_power_domains[] = {
 };
 
 static struct cpufreq_driver raspberrypi_cpufreq_driver = {
-	.name   = "rpi CPUFreq",
-	.init   = raspberrypi_cpufreq_init,
-	.target = raspberrypi_cpufreq_set_clock,
-	.verify = raspberrypi_cpufreq_verify,
-	.get    = raspberrypi_cpufreq_get_clock
+	.name   	= "rpi CPUFreq",
+	.init		= raspberrypi_cpufreq_init,
+	.target_index 	= raspberrypi_cpufreq_set_clock,
+	.verify 	= raspberrypi_cpufreq_verify,
+	.get    	= raspberrypi_cpufreq_get_clock,
+	.attr		= cpufreq_generic_attr
 };
 
 static int raspberrypi_firmware_probe(struct platform_device *pdev)
