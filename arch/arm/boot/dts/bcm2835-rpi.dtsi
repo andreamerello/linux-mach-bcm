@@ -21,6 +21,13 @@
 			compatible = "raspberrypi,firmware";
 			mboxes = <&mailbox>;
 			#power-domain-cells = <1>;
+			#clock-cells = <1>;
+		};
+
+		cpufreq: cpufreq {
+			compatible = "raspberrypi,cpufreq";
+			firmware = <&firmware>;
+			clocks = <&firmware 3>;
 		};
 	};
 };
