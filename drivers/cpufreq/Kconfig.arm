@@ -272,3 +272,10 @@ config ARM_PXA2xx_CPUFREQ
 	  This add the CPUFreq driver support for Intel PXA2xx SOCs.
 
 	  If in doubt, say N.
+
+config ARM_RASPBERRY_CPUFREQ
+	bool "Raspberry CPUFreq support"
+	depends on HAVE_CLK
+	default y
+	help
+	  This adds the CPUFreq driver support for raspberry pi.
