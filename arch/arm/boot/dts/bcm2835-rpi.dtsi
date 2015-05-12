@@ -22,6 +22,12 @@
 			mboxes = <&mailbox>;
 			#power-domain-cells = <1>;
 		};
+
+		firmware_clocks: firmware-clocks {
+			compatible = "raspberrypi,firmware-clocks";
+			#clock-cells = <1>;
+			firmware = <&firmware>;
+		};
 	};
 };
 
