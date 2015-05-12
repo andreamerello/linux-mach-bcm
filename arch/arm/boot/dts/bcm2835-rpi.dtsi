@@ -1,4 +1,5 @@
 #include <dt-bindings/arm/raspberrypi-firmware-power.h>
+#include <dt-bindings/clk/raspberrypi.h>
 #include "bcm2835.dtsi"
 
 / {
@@ -63,6 +64,7 @@
 &sdhci {
 	status = "okay";
 	bus-width = <4>;
+	clocks = <&firmware_clocks RPI_CLOCK_EMMC>;
 };
 
 &usb {
