@@ -85,11 +85,23 @@ int raspberrypi_firmware_property_list(struct device_node *of_node,
 				       void *data, size_t tag_size)
 {
 	struct platform_device *pdev = of_find_device_by_node(of_node);
-	struct raspberrypi_firmware *firmware = platform_get_drvdata(pdev);
+	struct raspberrypi_firmware *firmware;
 	size_t size = tag_size + 12;
 	u32 *buf;
 	dma_addr_t bus_addr;
 	int ret = 0;
+
+	if (!pdev){
+		printk("Invalid firmware OF node \n");
+		return -ENOSYS;
+	}
+
+	firmware = platform_get_drvdata(pdev);
+
+	if (!firmware) {
+		printk("Invalid firmware OF DEVICE \n");
+		return -ENOSYS;
+	}
 
 	/* Packets are processed a dword at a time. */
 	if (size & 3)
