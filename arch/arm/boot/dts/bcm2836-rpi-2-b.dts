@@ -41,28 +41,36 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		v7_cpu0: cpu@0 {
+		cpu0: cpu@0 {
 			device_type = "cpu";
 			compatible = "arm,cortex-a7";
 			reg = <0xf00>;
 			clock-frequency = <800000000>;
+			clocks = <&firmware_clocks RPI_CLOCK_ARM>;
+			clock-latency = <355000>;
+
+			operating-points = <
+				/* kHz    uV */
+				600000  0
+				900000  0
+			>;
 		};
 
-		v7_cpu1: cpu@1 {
+		cpu1: cpu@1 {
 			device_type = "cpu";
 			compatible = "arm,cortex-a7";
 			reg = <0xf01>;
 			clock-frequency = <800000000>;
 		};
 
-		v7_cpu2: cpu@2 {
+		cpu2: cpu@2 {
 			device_type = "cpu";
 			compatible = "arm,cortex-a7";
 			reg = <0xf02>;
 			clock-frequency = <800000000>;
 		};
 
-		v7_cpu3: cpu@3 {
+		cpu3: cpu@3 {
 			device_type = "cpu";
 			compatible = "arm,cortex-a7";
 			reg = <0xf03>;
