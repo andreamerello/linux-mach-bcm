@@ -70,3 +70,9 @@
 &usb {
 	power-domains = <&firmware POWER_DOMAIN_USB>;
 };
+
+&uart0 {
+	clocks = <&firmware_clocks RPI_CLOCK_UART0>,
+		 <&firmware_clocks RPI_CLOCK_CORE>;
+	clock-names = "uartclk", "apb_pclk";
+};
