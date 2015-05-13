@@ -65,6 +65,11 @@ struct smp_operations bcm2836_smp_ops __initdata = {
 };
 #endif
 
+static void __init bcm2836_dt_cpufreq_init(void)
+{
+	platform_device_register_simple("cpufreq-dt", -1, NULL, 0);
+}
+
 static void __init bcm2835_init(void)
 {
 	int ret;
@@ -99,5 +104,6 @@ DT_MACHINE_START(BCM2836, "BCM2836")
 	.smp = smp_ops(bcm2836_smp_ops),
 #endif
 	.init_machine = bcm2835_init,
-	.dt_compat = bcm2836_compat
+	.dt_compat = bcm2836_compat,
+	.init_late = bcm2836_dt_cpufreq_init
 MACHINE_END
