@@ -20,11 +20,13 @@
  * than that we have to request a frequency and take what it gives us.
  */
 
+#include <linux/device.h>
+#include <linux/of_platform.h>
 #include <dt-bindings/clk/raspberrypi.h>
 #include <linux/clk-provider.h>
 #include <soc/bcm2835/raspberrypi-firmware-property.h>
 
-struct rpi_firmware_clock {
+struct raspberrypi_firmware_clock {
 	/* Clock definitions in our static struct. */
 	int clock_id;
 	const char *name;
@@ -36,7 +38,7 @@ struct rpi_firmware_clock {
 	struct device_node *firmware_node;
 };
 
-static struct rpi_firmware_clock rpi_clocks[] = {
+static struct raspberrypi_firmware_clock rpi_clocks[] = {
 	[RPI_CLOCK_EMMC] = { 1, "emmc", CLK_IS_ROOT | CLK_IGNORE_UNUSED },
 	[RPI_CLOCK_UART0] = { 2, "uart0", CLK_IS_ROOT | CLK_IGNORE_UNUSED },
 	[RPI_CLOCK_ARM] = { 3, "arm", CLK_IS_ROOT | CLK_IGNORE_UNUSED },
@@ -51,15 +53,15 @@ static struct rpi_firmware_clock rpi_clocks[] = {
 
 static int rpi_clk_is_on(struct clk_hw *hw)
 {
-	struct rpi_firmware_clock *rpi_clk =
-		container_of(hw, struct rpi_firmware_clock, hw);
+	struct raspberrypi_firmware_clock *rpi_clk =
+		container_of(hw, struct raspberrypi_firmware_clock, hw);
 	u32 packet[2];
 	int ret;
 
 	packet[0] = rpi_clk->clock_id;
 	packet[1] = 0;
-	ret = rpi_firmware_property(rpi_clk->firmware_node,
-				    RPI_FIRMWARE_GET_CLOCK_STATE,
+	ret = raspberrypi_firmware_property(rpi_clk->firmware_node,
+				    RASPBERRYPI_FIRMWARE_GET_CLOCK_STATE,
 				    &packet, sizeof(packet));
 	if (ret) {
 		dev_err(rpi_clk->dev, "Failed to get clock state\n");
@@ -70,7 +72,7 @@ static int rpi_clk_is_on(struct clk_hw *hw)
 	return packet[1] != 0;
 }
 
-static int rpi_clk_set_enable(struct rpi_firmware_clock *rpi_clk, bool enable)
+static int rpi_clk_set_enable(struct raspberrypi_firmware_clock *rpi_clk, bool enable)
 {
 	u32 packet[2];
 	int ret;
@@ -79,8 +81,8 @@ static int rpi_clk_set_enable(struct rpi_firmware_clock *rpi_clk, bool enable)
 
 	packet[0] = rpi_clk->clock_id;
 	packet[1] = enable;
-	ret = rpi_firmware_property(rpi_clk->firmware_node,
-				    RPI_FIRMWARE_SET_CLOCK_STATE,
+	ret = raspberrypi_firmware_property(rpi_clk->firmware_node,
+				    RASPBERRYPI_FIRMWARE_SET_CLOCK_STATE,
 				    &packet, sizeof(packet));
 	if (ret || (packet[1] & (1 << 1))) {
 		dev_err(rpi_clk->dev, "Failed to set clock state\n");
@@ -94,16 +96,16 @@ static int rpi_clk_set_enable(struct rpi_firmware_clock *rpi_clk, bool enable)
 
 static int rpi_clk_on(struct clk_hw *hw)
 {
-	struct rpi_firmware_clock *rpi_clk =
-		container_of(hw, struct rpi_firmware_clock, hw);
+	struct raspberrypi_firmware_clock *rpi_clk =
+		container_of(hw, struct raspberrypi_firmware_clock, hw);
 
 	return rpi_clk_set_enable(rpi_clk, true);
 }
 
 static void rpi_clk_off(struct clk_hw *hw)
 {
-	struct rpi_firmware_clock *rpi_clk =
-		container_of(hw, struct rpi_firmware_clock, hw);
+	struct raspberrypi_firmware_clock *rpi_clk =
+		container_of(hw, struct raspberrypi_firmware_clock, hw);
 
 	rpi_clk_set_enable(rpi_clk, false);
 }
@@ -111,15 +113,15 @@ static void rpi_clk_off(struct clk_hw *hw)
 static unsigned long rpi_clk_get_rate(struct clk_hw *hw,
 					      unsigned long parent_rate)
 {
-	struct rpi_firmware_clock *rpi_clk =
-		container_of(hw, struct rpi_firmware_clock, hw);
+	struct raspberrypi_firmware_clock *rpi_clk =
+		container_of(hw, struct raspberrypi_firmware_clock, hw);
 	u32 packet[2];
 	int ret;
 
 	packet[0] = rpi_clk->clock_id;
 	packet[1] = 0;
-	ret = rpi_firmware_property(rpi_clk->firmware_node,
-				    RPI_FIRMWARE_GET_CLOCK_RATE,
+	ret = raspberrypi_firmware_property(rpi_clk->firmware_node,
+				    RASPBERRYPI_FIRMWARE_GET_CLOCK_RATE,
 				    &packet, sizeof(packet));
 	if (ret) {
 		dev_err(rpi_clk->dev, "Failed to get clock rate\n");
@@ -134,15 +136,15 @@ static unsigned long rpi_clk_get_rate(struct clk_hw *hw,
 static int rpi_clk_set_rate(struct clk_hw *hw,
 			    unsigned long rate, unsigned long parent_rate)
 {
-	struct rpi_firmware_clock *rpi_clk =
-		container_of(hw, struct rpi_firmware_clock, hw);
+	struct raspberrypi_firmware_clock *rpi_clk =
+		container_of(hw, struct raspberrypi_firmware_clock, hw);
 	u32 packet[2];
 	int ret;
 
 	packet[0] = rpi_clk->clock_id;
 	packet[1] = rate;
-	ret = rpi_firmware_property(rpi_clk->firmware_node,
-				    RPI_FIRMWARE_SET_CLOCK_RATE,
+	ret = raspberrypi_firmware_property(rpi_clk->firmware_node,
+				    RASPBERRYPI_FIRMWARE_SET_CLOCK_RATE,
 				    &packet, sizeof(packet));
 	if (ret) {
 		dev_err(rpi_clk->dev, "Failed to set clock rate\n");
@@ -181,7 +183,7 @@ static struct clk_ops rpi_clk_ops = {
 };
 
 DEFINE_MUTEX(delayed_clock_init);
-static struct clk *rpi_firmware_delayed_get_clk(struct of_phandle_args *clkspec,
+static struct clk *raspberrypi_firmware_delayed_get_clk(struct of_phandle_args *clkspec,
 						void *_data)
 {
 	struct device_node *of_node = _data;
@@ -190,7 +192,7 @@ static struct clk *rpi_firmware_delayed_get_clk(struct of_phandle_args *clkspec,
 	struct device_node *firmware_node;
 	struct platform_device *firmware_pdev;
 	struct clk_init_data init;
-	struct rpi_firmware_clock *rpi_clk;
+	struct raspberrypi_firmware_clock *rpi_clk;
 	struct clk *ret;
 
 	if (clkspec->args_count != 1) {
@@ -245,15 +247,15 @@ static struct clk *rpi_firmware_delayed_get_clk(struct of_phandle_args *clkspec,
 	return ret;
 }
 
-void __init rpi_firmware_init_clock_provider(struct device_node *node)
+void __init raspberrypi_firmware_init_clock_provider(struct device_node *node)
 {
 	/* We delay construction of our struct clks until get time,
 	 * because we need to be able to return -EPROBE_DEFER if the
 	 * firmware driver isn't up yet.  clk core doesn't support
 	 * re-probing on -EPROBE_DEFER, but callers of clk_get can.
 	 */
-	of_clk_add_provider(node, rpi_firmware_delayed_get_clk, node);
+	of_clk_add_provider(node, raspberrypi_firmware_delayed_get_clk, node);
 }
 
-CLK_OF_DECLARE(rpi_firmware_clocks, "raspberrypi,firmware-clocks",
-	       rpi_firmware_init_clock_provider);
+CLK_OF_DECLARE(raspberrypi_firmware_clocks, "raspberrypi,firmware-clocks",
+	       raspberrypi_firmware_init_clock_provider);
