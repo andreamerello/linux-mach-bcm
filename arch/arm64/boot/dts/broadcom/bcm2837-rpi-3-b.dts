@@ -8,7 +8,7 @@
 	model = "Raspberry Pi 3 Model B";
 
 	memory {
-		reg = <0 0x40000000>;
+		reg = <0 0x3b000000>;
 	};
 
 	leds {
@@ -23,6 +23,10 @@
 			linux,default-trigger = "default-on";
 		};
 	};
+};
+
+&gpio {
+	pinctrl-0 = <&gpioout &alt0>;
 };
 
 &uart1 {
