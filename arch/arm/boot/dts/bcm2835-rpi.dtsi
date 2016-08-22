@@ -59,7 +59,7 @@
 	status = "okay";
 };
 
-&sdhci {
+&sdhost {
 	status = "okay";
 	bus-width = <4>;
 };
