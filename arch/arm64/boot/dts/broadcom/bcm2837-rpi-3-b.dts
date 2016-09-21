@@ -36,6 +36,7 @@
 
 &sdhci {
 	status = "okay";
+	bus-width = <4>;
 	non-removable;
 	pinctrl-names = "default";
 	pinctrl-0 = <&alt3>;
