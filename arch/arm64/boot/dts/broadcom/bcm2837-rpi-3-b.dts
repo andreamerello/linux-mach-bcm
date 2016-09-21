@@ -26,7 +26,7 @@
 };
 
 &gpio {
-	pinctrl-0 = <&gpioout &alt0 &alt3>;
+	pinctrl-0 = <&gpioout &alt0>;
 	alt3: alt3 {
 		brcm,pins = <34 35 36 37 38 39>;
 		brcm,function = <BCM2835_FSEL_ALT3>;
@@ -37,6 +37,8 @@
 &sdhci {
 	status = "okay";
 	non-removable;
+	pinctrl-names = "default";
+	pinctrl-0 = <&alt3>;
 };
 
 &uart1 {
